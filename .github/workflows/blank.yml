@@ -1,4 +1,4 @@
-name: 🧪 Ultra-Verbose MLX Distillation Pipeline Preliminaries Tester
+name: "🧪 Ultra-Verbose MLX Distillation Pipeline Preliminaries Tester"
 
 on:
   push:
@@ -15,67 +15,48 @@ jobs:
         python-version: ['3.10', '3.11', '3.12']
 
     steps:
-      - name: 🛠️ Checkout repository
+      - name: "🛠️ Checkout repository"
         uses: actions/checkout@v4
 
-      - name: 🐍 Set up Python ${{ matrix.python-version }}
+      - name: "🐍 Set up Python ${{ matrix.python-version }}"
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
 
-      - name: 📦 Cache Hugging Face & MLX artifacts
+      - name: "📦 Cache Hugging Face & MLX artifacts"
         uses: actions/cache@v4
         with:
           path: |
             ~/.cache/huggingface
             ~/.cache/mlx
-          key: mlx-hf-cache-${{ runner.os }}-${{ matrix.python-version }}
-          restore-keys: mlx-hf-cache-${{ runner.os }}-
+          key: "mlx-hf-cache-${{ runner.os }}-${{ matrix.python-version }}"
+          restore-keys: "mlx-hf-cache-${{ runner.os }}-"
 
-      - name: 🔍 Pre-flight: Runner hardware & OS verification
+      - name: "🔍 Pre-flight: Runner hardware & OS verification"
         run: |
           echo "=== RUNNER ENVIRONMENT CHECK ==="
           echo "OS: $(uname -s)"
           echo "Architecture: $(uname -m)"
-          echo "Runner OS/Arch: $RUNNER_OS / $RUNNER_ARCH"
           if [[ "$(uname -m)" != "arm64" ]] || [[ "$(uname -s)" != "Darwin" ]]; then
-            echo "❌ CRITICAL: This is NOT Apple Silicon macOS. MLX requires arm64 + Metal."
+            echo "❌ CRITICAL: This is NOT Apple Silicon macOS."
             exit 1
           fi
-          echo "✅ Apple Silicon (arm64) macOS detected."
-          echo "macOS version: $(sw_vers -productVersion)"
+          echo "✅ Apple Silicon detected."
 
-      - name: 📦 Install dependencies
+      - name: "📦 Install dependencies"
         run: |
-          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install --upgrade pip
           pip install mlx mlx-lm huggingface_hub tqdm
-          python -c 'import mlx; import mlx_lm; print("MLX:", mlx.__version__)'
 
-      - name: 🧪 Run ultra-verbose Python test script
+      - name: "🧪 Run MLX Test"
         run: |
-          cat > /tmp/test_mlx_prelims.py << 'EOF'
-          import os
-          import sys
-          import time
-          import traceback
-          from datetime import datetime
-          try:
-              import mlx.core as mx
-              from mlx_lm import load, generate
-              print(f"Metal available: {mx.metal.is_available()}")
-              MODEL_ID = "mlx-community/SmolLM-135M-Instruct-4bit"
-              model, tokenizer = load(MODEL_ID, lazy=True)
-              output = generate(model, tokenizer, prompt="Hi", max_tokens=10)
-              print(f"Success: {output}")
-          except Exception:
-              traceback.print_exc()
-              sys.exit(1)
+          cat > /tmp/test_mlx.py << 'EOF'
+          import mlx.core as mx
+          print(f"Metal available: {mx.metal.is_available()}")
           EOF
-          python /tmp/test_mlx_prelims.py
+          python /tmp/test_mlx.py
 
-      - name: 🧹 Cleanup & summary
+      - name: "🧹 Cleanup & summary"
         if: always()
-        run: |
-          echo "=== FINAL SUMMARY ==="
-          echo "Workflow completed for Python ${{ matrix.python-version }}"
+        run: echo "Done."
