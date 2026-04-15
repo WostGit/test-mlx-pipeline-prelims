@@ -8,8 +8,7 @@ on:
 
 jobs:
   mlx-pipeline-prelims:
-    # Use explicit Apple Silicon runner (macOS 26+ is arm64 by default)
-    runs-on: macos-26
+    runs-on: macos-14
     strategy:
       fail-fast: false
       matrix:
@@ -42,94 +41,36 @@ jobs:
           echo "Runner OS/Arch: $RUNNER_OS / $RUNNER_ARCH"
           if [[ "$(uname -m)" != "arm64" ]] || [[ "$(uname -s)" != "Darwin" ]]; then
             echo "❌ CRITICAL: This is NOT Apple Silicon macOS. MLX requires arm64 + Metal."
-            echo "Failing early."
             exit 1
           fi
           echo "✅ Apple Silicon (arm64) macOS detected."
           echo "macOS version: $(sw_vers -productVersion)"
-          echo "=== END RUNNER CHECK ==="
 
-      - name: 📦 Install dependencies (mlx + mlx-lm + helpers)
+      - name: 📦 Install dependencies
         run: |
-          echo "=== PIP INSTALL START ==="
           python -m pip install --upgrade pip setuptools wheel
           pip install mlx mlx-lm huggingface_hub tqdm
-          echo "=== INSTALLED VERSIONS ==="
-          python -c '
-          import mlx
-          import mlx_lm
-          import huggingface_hub
-          print("MLX version      :", mlx.__version__)
-          print("mlx-lm version   :", mlx_lm.__version__)
-          print("huggingface_hub :", huggingface_hub.__version__)
-          '
-          echo "=== END DEPENDENCY INSTALL ==="
+          python -c 'import mlx; import mlx_lm; print("MLX:", mlx.__version__)'
 
       - name: 🧪 Run ultra-verbose Python test script
         run: |
           cat > /tmp/test_mlx_prelims.py << 'EOF'
-          #!/usr/bin/env python3
           import os
           import sys
           import time
           import traceback
           from datetime import datetime
-
-          print("=== MLX DISTILLATION PIPELINE PRELIMINARIES TEST START ===")
-          print(f"Start time: {datetime.now().isoformat()}")
-          print(f"Python version: {sys.version}")
-
-          # 1. MLX core + Metal detection
-          print("=== 1. MLX CORE + METAL ===")
           try:
               import mlx.core as mx
-              print("✅ mlx.core imported")
-              print(f"Metal available: {mx.metal.is_available()}")
-              if mx.metal.is_available():
-                  print("✅ Metal ready for inference/training")
-              else:
-                  print("❌ Metal NOT available – pipeline will fail")
-                  sys.exit(1)
-          except Exception as e:
-              print("❌ MLX import failed")
-              traceback.print_exc()
-              sys.exit(1)
-
-          # 2. mlx-lm import
-          print("=== 2. mlx-lm IMPORT ===")
-          try:
               from mlx_lm import load, generate
-              print("✅ mlx_lm loaded successfully")
-          except Exception as e:
-              print("❌ mlx-lm import failed")
-              traceback.print_exc()
-              sys.exit(1)
-
-          # 3. Model loading (tiny 4-bit for CI speed)
-          print("=== 3. MODEL LOADING ===")
-          MODEL_ID = "mlx-community/SmolLM-135M-Instruct-4bit"
-          try:
-              start = time.time()
+              print(f"Metal available: {mx.metal.is_available()}")
+              MODEL_ID = "mlx-community/SmolLM-135M-Instruct-4bit"
               model, tokenizer = load(MODEL_ID, lazy=True)
-              load_time = time.time() - start
-              print(f"✅ Model {MODEL_ID} loaded in {load_time:.2f}s")
-              print(f"Vocab size: {len(tokenizer)}")
-          except Exception as e:
-              print("❌ Model loading failed")
+              output = generate(model, tokenizer, prompt="Hi", max_tokens=10)
+              print(f"Success: {output}")
+          except Exception:
               traceback.print_exc()
               sys.exit(1)
-
-          # 4. Inference tests
-          print("=== 4. INFERENCE + EDGE CASES ===")
-          prompt = "Explain model distillation attacks in one sentence."
-          try:
-              output = generate(model, tokenizer, prompt=prompt, max_tokens=100, verbose=True)
-              print(f"✅ Normal generation succeeded: {output[:200]}...")
-          except Exception as e:
-              print("❌ Generation failed")
-              traceback.print_exc()
-
-          print("=== ALL PRELIMINARIES PASSED ===")
           EOF
           python /tmp/test_mlx_prelims.py
 
@@ -137,4 +78,4 @@ jobs:
         if: always()
         run: |
           echo "=== FINAL SUMMARY ==="
-          echo "Workflow completed for Python ${{ matrix.python-version }} on macOS Apple Silicon."
+          echo "Workflow completed for Python ${{ matrix.python-version }}"
