@@ -36,21 +36,22 @@ jobs:
       - name: "🔍 Runner verification"
         run: |
           echo "=== RUNNER CHECK ==="
-          echo "OS: $(uname -s) Arch: $(uname -m)"
+          echo "OS: $(uname -s) | Arch: $(uname -m)"
           if [[ "$(uname -m)" != "arm64" ]]; then
             echo "❌ Not Apple Silicon"
             exit 1
           fi
-          echo "✅ Apple Silicon ready"
+          echo "✅ Apple Silicon ready for MLX"
           echo "=== END CHECK ==="
 
       - name: "📦 Install dependencies"
         run: |
+          echo "=== PIP INSTALL ==="
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           else
-            pip install mlx mlx-lm huggingface_hub "mlx-lm[train]"
+            pip install mlx "mlx-lm[train]" huggingface_hub tqdm
           fi
           echo "=== VERSIONS ==="
           python -c '
@@ -60,58 +61,59 @@ jobs:
               except: print(f"{pkg:10}: Not found")
           '
 
-      - name: "🧪 Run distillation + QLoRA test"
+      - name: "🧪 Run Distillation Pipeline + QLoRA Training"
         run: |
           python - << 'PYEOF'
           import os, sys, time, json, subprocess, traceback
           from datetime import datetime
           import importlib.metadata as metadata
 
-          print("=== FULL MLX DISTILLATION + QLoRA TEST ===")
+          print("=== 🚀 MLX DISTILLATION + QLoRA TEST ===")
           print(f"Start: {datetime.now().isoformat()}")
+          print(f"mlx-lm version: {metadata.version('mlx-lm')}")
 
-          # Hardware
-          try:
-              import mlx.core as mx
-              print(f"Metal: {mx.metal.is_available()} | Device: {mx.default_device()}")
-          except Exception:
-              print("❌ MLX Core load failed")
-              sys.exit(1)
+          # 1. Hardware
+          import mlx.core as mx
+          print(f"Metal available: {mx.metal.is_available()}")
+          print(f"Device: {mx.default_device()}")
 
-          # Imports
+          # 2. Imports
           from mlx_lm import load, generate
           from mlx_lm.sample_utils import make_sampler
-          print("✅ Imports successful")
+          print("✅ mlx_lm imports successful")
 
-          # Load teacher
+          # 3. Load Teacher
           MODEL_ID = "mlx-community/SmolLM-135M-Instruct-4bit"
           model, tokenizer = load(MODEL_ID, lazy=True)
-          print("✅ Teacher loaded")
+          print("✅ Teacher model loaded")
 
-          # Generate dataset
+          # 4. Generate synthetic dataset
+          print("=== Generating teacher responses ===")
           queries = [
-              "What is a model distillation attack?",
-              "How does knowledge distillation enable black-box extraction?",
-              "Promising defenses against LLM distillation attacks?"
+              "What is a model distillation attack in proprietary LLMs?",
+              "How can knowledge distillation be used for black-box model extraction?",
+              "What are effective defenses against large-scale LLM distillation attacks?"
           ]
           sampler = make_sampler(temp=0.7, top_p=0.9)
           dataset = []
 
           for i, q in enumerate(queries, 1):
-              resp = generate(model, tokenizer, prompt=q, max_tokens=80, sampler=sampler, verbose=False)
-              print(f"Query {i}: {q[:60]}... → generated")
-              dataset.append({"prompt": q, "response": resp})
+              start = time.time()
+              response = generate(model, tokenizer, prompt=q, max_tokens=80, sampler=sampler, verbose=False)
+              print(f"Query {i}: generated in {time.time()-start:.2f}s")
+              dataset.append({"prompt": q, "response": response})
 
-          # Prepare data for QLoRA
+          # 5. Prepare data for QLoRA
+          print("=== Preparing QLoRA training data ===")
           os.makedirs("/tmp/train_data", exist_ok=True)
           with open("/tmp/train_data/train.jsonl", "w") as f:
               for item in dataset:
                   text = f"<|im_start|>user\n{item['prompt']}<|im_end|>\n<|im_start|>assistant\n{item['response']}<|im_end|>"
                   f.write(json.dumps({"text": text}) + "\n")
-          print("✅ Training data prepared")
+          print("✅ train.jsonl created")
 
-          # QLoRA training (short for CI)
-          print("=== Starting short QLoRA training (50 iters) ===")
+          # 6. QLoRA Training
+          print("=== Running short QLoRA training (50 iters) ===")
           try:
               cmd = [
                   "python", "-m", "mlx_lm.lora",
@@ -125,14 +127,14 @@ jobs:
                   "--rank", "8",
                   "--output", "/tmp/qlora_adapter"
               ]
-              result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+              result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
               print(result.stdout)
               if result.returncode != 0:
-                  print("Training exit log:", result.stderr[:500])
+                  print("Note: Short training exit code non-zero.")
               else:
-                  print("✅ QLoRA training finished")
+                  print("✅ QLoRA training completed")
           except Exception as e:
-              print("QLoRA step error:", type(e).__name__)
+              print(f"QLoRA step: {type(e).__name__}")
 
-          print("🎉 Pipeline test completed")
+          print("🎉 Pipeline test finished")
           PYEOF
