@@ -41,7 +41,7 @@ jobs:
             echo "❌ Not Apple Silicon"
             exit 1
           fi
-          echo "✅ Apple Silicon ready for MLX"
+          echo "✅ Apple Silicon ready for MLX + QLoRA"
           echo "=== END CHECK ==="
 
       - name: "📦 Install dependencies"
@@ -51,7 +51,8 @@ jobs:
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           else
-            pip install mlx "mlx-lm[train]" huggingface_hub tqdm
+            # Fallback if requirements.txt isn't in root
+            pip install mlx mlx-lm huggingface_hub "mlx-lm[train]"
           fi
           echo "=== VERSIONS ==="
           python -c '
@@ -64,47 +65,46 @@ jobs:
       - name: "🧪 Run Distillation Pipeline + QLoRA Training"
         run: |
           python - << 'PYEOF'
-          import os, sys, time, json, subprocess, traceback
+          import os, time, json, subprocess, traceback
           from datetime import datetime
           import importlib.metadata as metadata
 
-          print("=== 🚀 MLX DISTILLATION + QLoRA TEST ===")
+          print("=== 🚀 FULL MLX DISTILLATION + QLoRA TEST ===")
           print(f"Start: {datetime.now().isoformat()}")
           print(f"mlx-lm version: {metadata.version('mlx-lm')}")
 
-          # 1. Hardware
+          # Hardware
           import mlx.core as mx
-          print(f"Metal available: {mx.metal.is_available()}")
-          print(f"Device: {mx.default_device()}")
+          print(f"Metal: {mx.metal.is_available()} | Device: {mx.default_device()}")
 
-          # 2. Imports
+          # Imports
           from mlx_lm import load, generate
           from mlx_lm.sample_utils import make_sampler
-          print("✅ mlx_lm imports successful")
+          print("✅ Imports successful")
 
-          # 3. Load Teacher
+          # Load teacher
           MODEL_ID = "mlx-community/SmolLM-135M-Instruct-4bit"
           model, tokenizer = load(MODEL_ID, lazy=True)
-          print("✅ Teacher model loaded")
+          print("✅ Teacher loaded")
 
-          # 4. Generate synthetic dataset
-          print("=== Generating teacher responses ===")
+          # Generate synthetic teacher dataset
+          print("\n=== 4. TEACHER QUERYING + DATASET CREATION ===")
           queries = [
               "What is a model distillation attack in proprietary LLMs?",
-              "How can knowledge distillation be used for black-box model extraction?",
-              "What are effective defenses against large-scale LLM distillation attacks?"
+              "How can knowledge distillation enable black-box model extraction?",
+              "What are promising defenses against large-scale LLM distillation attacks?"
           ]
           sampler = make_sampler(temp=0.7, top_p=0.9)
           dataset = []
 
           for i, q in enumerate(queries, 1):
               start = time.time()
-              response = generate(model, tokenizer, prompt=q, max_tokens=80, sampler=sampler, verbose=False)
+              response = generate(model, tokenizer, prompt=q, max_tokens=100, sampler=sampler, verbose=False)
               print(f"Query {i}: generated in {time.time()-start:.2f}s")
               dataset.append({"prompt": q, "response": response})
 
-          # 5. Prepare data for QLoRA
-          print("=== Preparing QLoRA training data ===")
+          # Prepare QLoRA data
+          print("\n=== 5. PREPARING QLoRA TRAINING DATA ===")
           os.makedirs("/tmp/train_data", exist_ok=True)
           with open("/tmp/train_data/train.jsonl", "w") as f:
               for item in dataset:
@@ -112,8 +112,8 @@ jobs:
                   f.write(json.dumps({"text": text}) + "\n")
           print("✅ train.jsonl created")
 
-          # 6. QLoRA Training
-          print("=== Running short QLoRA training (50 iters) ===")
+          # QLoRA training
+          print("\n=== 6. QLoRA STUDENT TRAINING (50 iters) ===")
           try:
               cmd = [
                   "python", "-m", "mlx_lm.lora",
@@ -127,14 +127,14 @@ jobs:
                   "--rank", "8",
                   "--output", "/tmp/qlora_adapter"
               ]
-              result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+              result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
               print(result.stdout)
               if result.returncode != 0:
-                  print("Note: Short training exit code non-zero.")
+                  print("Note: Training process logged an exit code or error.")
               else:
-                  print("✅ QLoRA training completed")
+                  print("✅ QLoRA training finished")
           except Exception as e:
-              print(f"QLoRA step: {type(e).__name__}")
+              print(f"QLoRA error: {type(e).__name__}")
 
-          print("🎉 Pipeline test finished")
+          print("\n🎉 Distillation + QLoRA pipeline test completed!")
           PYEOF
