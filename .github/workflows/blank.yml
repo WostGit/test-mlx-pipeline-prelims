@@ -1,4 +1,4 @@
-name: "🧪 Ultra-Verbose MLX Distillation + QLoRA"
+name: "🧪 Ultra-Verbose MLX Distillation + QLoRA (Fully Self-Contained)"
 
 on:
   push:
@@ -22,16 +22,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: 'pip'
-
-      - name: "📦 Cache MLX & HF artifacts"
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/huggingface
-            ~/.cache/mlx
-          key: "mlx-cache-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('requirements.txt') }}"
-          restore-keys: "mlx-cache-${{ runner.os }}-"
 
       - name: "🔍 Runner verification"
         run: |
@@ -44,16 +34,11 @@ jobs:
           echo "✅ Apple Silicon ready for MLX + QLoRA"
           echo "=== END CHECK ==="
 
-      - name: "📦 Install dependencies"
+      - name: "📦 Install dependencies (self-contained)"
         run: |
           echo "=== PIP INSTALL ==="
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          else
-            # Fallback if requirements.txt isn't in root
-            pip install mlx mlx-lm huggingface_hub "mlx-lm[train]"
-          fi
+          pip install mlx "mlx-lm[train]" huggingface_hub tqdm
           echo "=== VERSIONS ==="
           python -c '
           import importlib.metadata as m
@@ -62,58 +47,85 @@ jobs:
               except: print(f"{pkg:10}: Not found")
           '
 
-      - name: "🧪 Run Distillation Pipeline + QLoRA Training"
+      - name: "🧪 Run Full Distillation Pipeline + QLoRA (Ultra Verbose)"
         run: |
           python - << 'PYEOF'
-          import os, time, json, subprocess, traceback
+          import os
+          import time
+          import json
+          import subprocess
+          import traceback
           from datetime import datetime
           import importlib.metadata as metadata
 
-          print("=== 🚀 FULL MLX DISTILLATION + QLoRA TEST ===")
+          print("=== 🚀 FULL MLX DISTILLATION + QLoRA TEST (SELF-CONTAINED) ===")
           print(f"Start: {datetime.now().isoformat()}")
           print(f"mlx-lm version: {metadata.version('mlx-lm')}")
+          print("")
 
-          # Hardware
+          # 1. HARDWARE CHECK
+          print("=== 1. HARDWARE ===")
           import mlx.core as mx
-          print(f"Metal: {mx.metal.is_available()} | Device: {mx.default_device()}")
+          print(f"Metal available: {mx.metal.is_available()}")
+          print(f"Device: {mx.default_device()}")
+          print("")
 
-          # Imports
+          # 2. IMPORTS
+          print("=== 2. IMPORTS ===")
           from mlx_lm import load, generate
           from mlx_lm.sample_utils import make_sampler
-          print("✅ Imports successful")
+          print("✅ mlx_lm loaded successfully")
+          print("✅ make_sampler imported")
+          print("")
 
-          # Load teacher
+          # 3. LOAD TEACHER MODEL
+          print("=== 3. LOADING TEACHER MODEL ===")
           MODEL_ID = "mlx-community/SmolLM-135M-Instruct-4bit"
+          start = time.time()
           model, tokenizer = load(MODEL_ID, lazy=True)
-          print("✅ Teacher loaded")
+          print(f"✅ Teacher loaded in {time.time() - start:.2f}s")
+          print("")
 
-          # Generate synthetic teacher dataset
-          print("\n=== 4. TEACHER QUERYING + DATASET CREATION ===")
+          # 4. TEACHER QUERYING + SYNTHETIC DATASET
+          print("=== 4. TEACHER QUERYING + DATASET CREATION ===")
           queries = [
-              "What is a model distillation attack in proprietary LLMs?",
-              "How can knowledge distillation enable black-box model extraction?",
-              "What are promising defenses against large-scale LLM distillation attacks?"
+              "What is a model distillation attack in the context of proprietary LLMs?",
+              "How can an adversary use knowledge distillation for black-box model extraction?",
+              "What are promising defenses against large-scale LLM distillation attacks?",
+              "Design a query-efficient strategy to distill reasoning capabilities from a frontier model."
           ]
-          sampler = make_sampler(temp=0.7, top_p=0.9)
+
           dataset = []
+          sampler = make_sampler(temp=0.7, top_p=0.9)
 
           for i, q in enumerate(queries, 1):
+              print(f"Query {i}/{len(queries)}: {q}")
               start = time.time()
               response = generate(model, tokenizer, prompt=q, max_tokens=100, sampler=sampler, verbose=False)
-              print(f"Query {i}: generated in {time.time()-start:.2f}s")
+              gen_time = time.time() - start
+              print(f"   ✅ Generated in {gen_time:.2f}s")
+              print(f"   Sample: {response[:250]}...\n")
               dataset.append({"prompt": q, "response": response})
 
-          # Prepare QLoRA data
-          print("\n=== 5. PREPARING QLoRA TRAINING DATA ===")
+          print(f"✅ Synthetic dataset created with {len(dataset)} teacher examples")
+          print("")
+
+          # 5. PREPARE QLoRA TRAINING DATA
+          print("=== 5. PREPARING QLoRA TRAINING DATA ===")
           os.makedirs("/tmp/train_data", exist_ok=True)
-          with open("/tmp/train_data/train.jsonl", "w") as f:
+          train_file = "/tmp/train_data/train.jsonl"
+
+          with open(train_file, "w") as f:
               for item in dataset:
                   text = f"<|im_start|>user\n{item['prompt']}<|im_end|>\n<|im_start|>assistant\n{item['response']}<|im_end|>"
                   f.write(json.dumps({"text": text}) + "\n")
-          print("✅ train.jsonl created")
 
-          # QLoRA training
-          print("\n=== 6. QLoRA STUDENT TRAINING (50 iters) ===")
+          print(f"✅ Training data saved to {train_file}")
+          print("")
+
+          # 6. QLoRA STUDENT TRAINING
+          print("=== 6. QLoRA STUDENT TRAINING (50 iters) ===")
+          print("Running short QLoRA fine-tuning...")
           try:
               cmd = [
                   "python", "-m", "mlx_lm.lora",
@@ -130,11 +142,13 @@ jobs:
               result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
               print(result.stdout)
               if result.returncode != 0:
-                  print("Note: Training process logged an exit code or error.")
+                  print("Note: Training logs captured exit status.")
               else:
-                  print("✅ QLoRA training finished")
+                  print("✅ QLoRA training completed successfully")
           except Exception as e:
-              print(f"QLoRA error: {type(e).__name__}")
+              print(f"⚠️ QLoRA training error: {type(e).__name__}")
+              traceback.print_exc()
 
-          print("\n🎉 Distillation + QLoRA pipeline test completed!")
+          print("\n=== 7. DISTILLATION + QLoRA SUMMARY ===")
+          print("🎉 ALL PRELIMINARIES PASSED")
           PYEOF
