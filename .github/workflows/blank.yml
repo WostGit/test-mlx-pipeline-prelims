@@ -4,10 +4,14 @@ on:
   push:
     branches: [ main, master ]
   pull_request:
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
   mlx-pipeline-prelims:
+    name: "Run (Python ${{ matrix.python-version }})"
+    # macos-14 is the standard M1/arm64 runner. 
+    # macos-latest (as of 2024/2025) usually points here.
     runs-on: macos-14
     strategy:
       fail-fast: false
@@ -15,48 +19,123 @@ jobs:
         python-version: ['3.10', '3.11', '3.12']
 
     steps:
-      - name: "🛠️ Checkout repository"
+      - name: "🛠️ Step 1: Checkout Repository"
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-      - name: "🐍 Set up Python ${{ matrix.python-version }}"
+      - name: "🐍 Step 2: Set up Python ${{ matrix.python-version }}"
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: 'pip'
+          # NOTE: 'cache' is removed to prevent errors when requirements.txt is missing
 
-      - name: "📦 Cache Hugging Face & MLX artifacts"
+      - name: "📦 Step 3: Cache Hugging Face & MLX artifacts"
         uses: actions/cache@v4
         with:
           path: |
             ~/.cache/huggingface
             ~/.cache/mlx
-          key: "mlx-hf-cache-${{ runner.os }}-${{ matrix.python-version }}"
-          restore-keys: "mlx-hf-cache-${{ runner.os }}-"
+          key: "mlx-hf-cache-${{ runner.os }}-${{ matrix.python-version }}-${{ github.sha }}"
+          restore-keys: |
+            mlx-hf-cache-${{ runner.os }}-${{ matrix.python-version }}-
+            mlx-hf-cache-${{ runner.os }}-
 
-      - name: "🔍 Pre-flight: Runner hardware & OS verification"
+      - name: "🔍 Step 4: Verbose Environment & Hardware Check"
         run: |
-          echo "=== RUNNER ENVIRONMENT CHECK ==="
+          echo "=== SYSTEM INFORMATION ==="
+          echo "Date: $(date)"
+          echo "User: $(whoami)"
+          echo "Hostname: $(hostname)"
           echo "OS: $(uname -s)"
-          echo "Architecture: $(uname -m)"
-          if [[ "$(uname -m)" != "arm64" ]] || [[ "$(uname -s)" != "Darwin" ]]; then
-            echo "❌ CRITICAL: This is NOT Apple Silicon macOS."
+          echo "Kernel: $(uname -r)"
+          echo "Arch: $(uname -m)"
+          echo "CPU: $(sysctl -n machdep.cpu.brand_string)"
+          echo "Memory: $(sysctl -n hw.memsize | awk '{print $0/1024/1024/1024 " GB"}')"
+          
+          echo -e "\n=== ARCHITECTURE VERIFICATION ==="
+          if [[ "$(uname -m)" != "arm64" ]]; then
+            echo "❌ ERROR: Not running on Apple Silicon (arm64). MLX will not work."
             exit 1
+          else
+            echo "✅ Confirmed: Apple Silicon (arm64) detected."
           fi
-          echo "✅ Apple Silicon detected."
 
-      - name: "📦 Install dependencies"
+      - name: "📦 Step 5: Install MLX & Dependencies"
         run: |
-          python -m pip install --upgrade pip
+          echo "=== UPDATING PIP ==="
+          python -m pip install --upgrade pip setuptools wheel
+          
+          echo -e "\n=== INSTALLING MLX STACK ==="
           pip install mlx mlx-lm huggingface_hub tqdm
+          
+          echo -e "\n=== VERIFYING INSTALLATION ==="
+          pip list | grep -E "mlx|huggingface|tqdm"
 
-      - name: "🧪 Run MLX Test"
+      - name: "🧪 Step 6: Execute Multi-Stage MLX Preliminary Test"
         run: |
-          cat > /tmp/test_mlx.py << 'EOF'
-          import mlx.core as mx
-          print(f"Metal available: {mx.metal.is_available()}")
-          EOF
-          python /tmp/test_mlx.py
+          cat > /tmp/test_mlx_core.py << 'EOF'
+          import os
+          import sys
+          import time
+          import traceback
+          from datetime import datetime
 
-      - name: "🧹 Cleanup & summary"
+          def run_test():
+              print(f"--- MLX PRE-FLIGHT TEST ---")
+              print(f"Timestamp: {datetime.now()}")
+              
+              # Test 1: Core Import
+              try:
+                  import mlx.core as mx
+                  print("✅ Test 1: mlx.core imported successfully.")
+              except Exception as e:
+                  print(f"❌ Test 1 Failed: {e}")
+                  return False
+
+              # Test 2: Metal Availability
+              try:
+                  gpu_accel = mx.metal.is_available()
+                  if gpu_accel:
+                      print(f"✅ Test 2: Metal acceleration is AVAILABLE.")
+                      print(f"   Device Type: {mx.default_device()}")
+                  else:
+                      print("❌ Test 2 Failed: Metal NOT detected. Pipeline cannot proceed.")
+                      return False
+              except Exception as e:
+                  print(f"❌ Test 2 Failed: {e}")
+                  return False
+
+              # Test 3: Basic Computation
+              try:
+                  a = mx.array([1.0, 2.0, 3.0])
+                  b = mx.array([4.0, 5.0, 6.0])
+                  c = a + b
+                  mx.eval(c)
+                  if c.tolist() == [5.0, 7.0, 9.0]:
+                      print("✅ Test 3: Basic MLX math (Metal Compute) verified.")
+                  else:
+                      print(f"❌ Test 3 Failed: Math result mismatch: {c}")
+                      return False
+              except Exception as e:
+                  print(f"❌ Test 3 Failed: {e}")
+                  return False
+
+              return True
+
+          if __name__ == "__main__":
+              success = run_test()
+              if not success:
+                  sys.exit(1)
+              print("--- ALL CORE TESTS PASSED ---")
+          EOF
+          
+          python /tmp/test_mlx_core.py
+
+      - name: "🧹 Step 7: Cleanup & Workflow Summary"
         if: always()
-        run: echo "Done."
+        run: |
+          echo "=== WORKFLOW COMPLETE ==="
+          echo "Status: ${{ job.status }}"
+          echo "Python Version: ${{ matrix.python-version }}"
+          echo "Runner OS: ${{ runner.os }}"
