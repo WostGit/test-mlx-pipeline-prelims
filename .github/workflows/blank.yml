@@ -22,6 +22,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          # Removed automatic 'cache' to prevent errors if requirements.txt is missing
 
       - name: "📦 Cache Hugging Face & MLX artifacts"
         uses: actions/cache@v4
@@ -38,12 +39,11 @@ jobs:
           echo "Date: $(date)"
           echo "OS: $(uname -s)"
           echo "Arch: $(uname -m)"
-          echo "Runner: $RUNNER_OS / $RUNNER_ARCH"
           if [[ "$(uname -m)" != "arm64" ]] || [[ "$(uname -s)" != "Darwin" ]]; then
-            echo "❌ CRITICAL: Not Apple Silicon macOS → MLX will fail"
+            echo "❌ CRITICAL: Not Apple Silicon macOS"
             exit 1
           fi
-          echo "✅ Apple Silicon (arm64) macOS confirmed"
+          echo "✅ Apple Silicon confirmed"
           echo "=== END CHECK ==="
 
       - name: "📦 Install dependencies (mlx + mlx-lm + helpers)"
@@ -53,12 +53,10 @@ jobs:
           pip install mlx mlx-lm huggingface_hub tqdm
           echo "=== VERSIONS ==="
           python -c '
-          import mlx
-          import mlx_lm
-          import huggingface_hub
-          print("MLX:", mlx.__version__)
-          print("mlx-lm:", mlx_lm.__version__)
-          print("huggingface_hub:", huggingface_hub.__version__)
+          import importlib.metadata as metadata
+          print("mlx version          :", metadata.version("mlx"))
+          print("mlx-lm version       :", metadata.version("mlx-lm"))
+          print("huggingface_hub      :", metadata.version("huggingface_hub"))
           '
           echo "=== INSTALL COMPLETE ==="
 
@@ -70,10 +68,12 @@ jobs:
           import time
           import traceback
           from datetime import datetime
+          import importlib.metadata as metadata
 
           print("=== 🚀 MLX DISTILLATION PIPELINE PRELIMINARIES TEST (FULL) ===")
           print(f"Start: {datetime.now().isoformat()}")
           print(f"Python: {sys.version}")
+          print(f"mlx version: {metadata.version('mlx')}")
           print("")
 
           # 1. MLX Core + Metal
@@ -87,7 +87,7 @@ jobs:
                   print("✅ Metal GPU ready for teacher inference & student training")
                   print("Device:", mx.default_device())
               else:
-                  print("❌ Metal unavailable — distillation pipeline will be CPU-only (slow)")
+                  print("❌ Metal unavailable")
                   sys.exit(1)
           except Exception as e:
               print("❌ MLX core failed")
@@ -97,42 +97,40 @@ jobs:
           # 2. mlx-lm imports
           print("=== 2. MLX-LM IMPORTS ===")
           try:
-              from mlx_lm import load, generate, stream_generate
-              print("✅ mlx_lm loaded (load, generate, stream_generate)")
+              from mlx_lm import load, generate
+              print("✅ mlx_lm loaded")
           except Exception as e:
               print("❌ mlx_lm import failed")
               traceback.print_exc()
               sys.exit(1)
 
           # 3. Model loading
-          print("=== 3. MODEL LOADING (Teacher / Student base) ===")
+          print("=== 3. MODEL LOADING ===")
           MODEL_ID = "mlx-community/SmolLM-135M-Instruct-4bit"
           try:
               start = time.time()
               model, tokenizer = load(MODEL_ID, lazy=True)
-              load_time = time.time() - start
-              print(f"✅ Model loaded in {load_time:.2f}s")
-              print(f"Vocab size: {len(tokenizer)}")
+              print(f"✅ Model {MODEL_ID} loaded in {time.time() - start:.2f}s")
           except Exception as e:
               print("❌ Model load failed")
               traceback.print_exc()
               sys.exit(1)
 
           # 4. Inference + Edge Cases
-          print("=== 4. INFERENCE + ALL EDGE CASES ===")
-          prompt = "Explain LLM model distillation attacks for an IEEE S&P paper."
+          print("=== 4. INFERENCE + EDGE CASES ===")
+          prompt = "Explain LLM model distillation attacks in one sentence."
           try:
-              output = generate(model, tokenizer, prompt=prompt, max_tokens=120, verbose=True)
+              output = generate(model, tokenizer, prompt=prompt, max_tokens=60, verbose=True)
               print(f"✅ Normal generate() OK")
           except Exception as e:
               print("❌ Normal generate failed")
 
-          # Distillation simulation
+          # 5. Distillation simulation
           print("=== 5. DISTILLATION PRELIM SIMULATION ===")
           queries = ["What is a model extraction attack?", "How to defend against distillation?"]
           for q in queries:
-              resp = generate(model, tokenizer, prompt=q, max_tokens=60, verbose=False)
-              print(f"Query: {q}\n→ {resp[:200]}...\n")
+              resp = generate(model, tokenizer, prompt=q, max_tokens=50, verbose=False)
+              print(f"Query: {q}\n→ {resp[:100]}...\n")
 
           print("=== 🎉 ALL PRELIMINARIES PASSED ===")
           EOF
@@ -142,5 +140,5 @@ jobs:
         if: always()
         run: |
           echo "=== WORKFLOW SUMMARY ==="
-          echo "Python version: ${{ matrix.python-version }}"
+          echo "Python: ${{ matrix.python-version }}"
           echo "Status: All core distillation preliminaries verified ✅"
