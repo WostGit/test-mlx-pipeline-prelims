@@ -22,7 +22,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          # Removed automatic 'cache' to avoid errors if requirements.txt is missing
 
       - name: "📦 Cache Hugging Face & MLX artifacts"
         uses: actions/cache@v4
@@ -40,10 +39,10 @@ jobs:
           echo "OS: $(uname -s)"
           echo "Arch: $(uname -m)"
           if [[ "$(uname -m)" != "arm64" ]] || [[ "$(uname -s)" != "Darwin" ]]; then
-            echo "❌ CRITICAL: Not Apple Silicon macOS → MLX will fail"
+            echo "❌ CRITICAL: Not Apple Silicon macOS"
             exit 1
           fi
-          echo "✅ Apple Silicon (arm64) confirmed"
+          echo "✅ Apple Silicon confirmed"
           echo "=== END CHECK ==="
 
       - name: "📦 Install dependencies (mlx + mlx-lm + helpers)"
@@ -54,11 +53,9 @@ jobs:
           echo "=== VERSIONS ==="
           python -c '
           import importlib.metadata as metadata
-          for pkg in ["mlx", "mlx-lm", "huggingface_hub", "numpy"]:
-              try:
-                  print(f"{pkg:15}: {metadata.version(pkg)}")
-              except:
-                  print(f"{pkg:15}: NOT INSTALLED")
+          print("mlx version      :", metadata.version("mlx"))
+          print("mlx-lm version   :", metadata.version("mlx-lm"))
+          print("huggingface_hub  :", metadata.version("huggingface_hub"))
           '
           echo "=== INSTALL COMPLETE ==="
 
@@ -75,74 +72,88 @@ jobs:
           print("=== 🚀 FULL MLX DISTILLATION PIPELINE TEST (mlx-lm 0.31.x) ===")
           print(f"Start: {datetime.now().isoformat()}")
           print(f"Python: {sys.version}")
-          
+          print(f"mlx version: {metadata.version('mlx')}")
+          print(f"mlx-lm version: {metadata.version('mlx-lm')}")
+          print("")
+
           # 1. HARDWARE
           print("=== 1. HARDWARE ===")
-          try:
-              import mlx.core as mx
-              print(f"Metal available: {mx.metal.is_available()}")
-              print(f"Device: {mx.default_device()}")
-          except Exception:
-              print("❌ Hardware check failed")
-              traceback.print_exc()
-              sys.exit(1)
+          import mlx.core as mx
+          print(f"Metal available: {mx.metal.is_available()}")
+          print(f"Device: {mx.default_device()}")
+          print("")
 
           # 2. IMPORTS
-          print("\n=== 2. IMPORTS ===")
-          try:
-              from mlx_lm import load, generate
-              from mlx_lm.sample_utils import make_sampler
-              print("✅ mlx_lm and make_sampler imported")
-          except Exception:
-              print("❌ Import failed")
-              traceback.print_exc()
-              sys.exit(1)
+          print("=== 2. IMPORTS ===")
+          from mlx_lm import load, generate
+          from mlx_lm.sample_utils import make_sampler
+          print("✅ mlx_lm loaded")
+          print("✅ make_sampler imported (for temperature / top_p control)")
+          print("")
 
-          # 3. LOAD TEACHER MODEL
-          print("\n=== 3. LOADING TEACHER MODEL ===")
+          # 3. LOAD TEACHER
+          print("=== 3. LOADING TEACHER MODEL ===")
           MODEL_ID = "mlx-community/SmolLM-135M-Instruct-4bit"
-          try:
-              start = time.time()
-              model, tokenizer = load(MODEL_ID, lazy=True)
-              print(f"✅ Teacher loaded in {time.time() - start:.2f}s")
-          except Exception:
-              print("❌ Model loading failed")
-              traceback.print_exc()
-              sys.exit(1)
+          start = time.time()
+          model, tokenizer = load(MODEL_ID, lazy=True)
+          print(f"✅ Teacher loaded in {time.time() - start:.2f}s")
+          print("")
 
-          # 4. TEACHER QUERYING + DATASET CREATION
-          print("\n=== 4. TEACHER QUERYING + DATASET CREATION ===")
+          # 4. TEACHER QUERYING + DATASET
+          print("=== 4. TEACHER QUERYING + DATASET CREATION ===")
           queries = [
-              "What is a model distillation attack?",
-              "Explain knowledge distillation in model extraction attacks.",
-              "Defenses against LLM distillation?",
-              "Describe a query-efficient black-box distillation pipeline."
+              "What is a model distillation attack in the context of proprietary LLMs?",
+              "How can an adversary use knowledge distillation for black-box model extraction?",
+              "What are promising defenses against large-scale LLM distillation attacks?",
+              "Design a query-efficient strategy to distill reasoning capabilities from a frontier model."
           ]
+
           dataset = []
           sampler = make_sampler(temp=0.7, top_p=0.9)
+
           for i, q in enumerate(queries, 1):
               print(f"Query {i}/{len(queries)}: {q}")
-              try:
-                  start = time.time()
-                  response = generate(model, tokenizer, prompt=q, max_tokens=120, sampler=sampler, verbose=False)
-                  print(f"   ✅ Response generated in {time.time() - start:.2f}s")
-                  dataset.append({"prompt": q, "response": response})
-              except Exception:
-                  print(f"   ❌ Query failed")
+              start = time.time()
+              response = generate(
+                  model, tokenizer,
+                  prompt=q,
+                  max_tokens=120,
+                  sampler=sampler,
+                  verbose=False
+              )
+              gen_time = time.time() - start
+              print(f"   ✅ Generated in {gen_time:.2f}s")
+              print(f"   Sample: {response[:280]}...\n")
+              dataset.append({"prompt": q, "response": response})
+
+          print(f"✅ Synthetic dataset ready with {len(dataset)} teacher examples")
+          print("")
 
           # 5. EDGE CASES
-          print("\n=== 5. EDGE CASES ===")
-          edge_cases = [("Empty prompt", ""), ("Zero max_tokens", "Test", 0)]
-          for name, prompt, *args in edge_cases:
-              try:
-                  m_tokens = args[0] if args else 10
-                  _ = generate(model, tokenizer, prompt=prompt, max_tokens=m_tokens, verbose=False)
-                  print(f"✅ {name} handled")
-              except Exception:
-                  print(f"⚠️ {name} raised exception")
+          print("=== 5. EDGE CASES (expected failures documented) ===")
+          edge_cases = [
+              ("Empty prompt", ""),
+              ("Zero max_tokens", "Test prompt", 0),
+              ("High temperature", "Test prompt", 128, 1.5),
+              ("Low temperature", "Test prompt", 64, 0.1),
+          ]
 
-          print("\n=== 🎉 ALL PRELIMINARIES PASSED ===")
+          for name, prompt, *args in edge_cases:
+              max_t = args[0] if args else 10
+              temp_val = args[1] if len(args) > 1 else 0.7
+              try:
+                  sampler_edge = make_sampler(temp=temp_val, top_p=0.95)
+                  _ = generate(model, tokenizer, prompt=prompt, max_tokens=max_t, sampler=sampler_edge, verbose=False)
+                  print(f"✅ {name} succeeded")
+              except Exception as e:
+                  print(f"⚠️ {name} raised {type(e).__name__}")
+          print("")
+
+          # 6. SUMMARY
+          print("=== 6. DISTILLATION PIPELINE SUMMARY ===")
+          print("🎉 ALL CORE PRELIMINARIES PASSED")
           EOF
+
           python /tmp/test_distillation_pipeline.py
 
       - name: "🧹 Cleanup & final summary"
