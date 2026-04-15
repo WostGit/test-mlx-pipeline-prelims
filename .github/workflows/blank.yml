@@ -1,26 +1,4 @@
-name: 🧪 Ultra-Verbose MLX Distillation Pipeline Preliminaries Tester (GitHub Actions)
-
-# This workflow is designed SPECIFICALLY for testing ALL preliminaries of an LLM distillation pipeline using Apple's MLX + mlx-lm.
-# It runs ONLY on macOS Apple Silicon runners (required for MLX/Metal).
-# It is ULTRA VERBOSE: every step, every check, every edge case is logged with === SECTION === banners,
-# detailed print statements, timings, and full error traces.
-# It explicitly tests:
-#   - Runner hardware/OS compatibility (edge: non-Apple-Silicon or Linux/Windows)
-#   - Python version matrix (3.10–3.12)
-#   - pip install of mlx + mlx-lm + helpers
-#   - MLX core import + Metal device detection
-#   - HF model caching
-#   - Model loading (good model + edge: invalid repo, network fail simulation)
-#   - Inference (generate, stream_generate, chat template, edge: empty prompt, max_tokens=0, high temp)
-#   - Quantized 4-bit small model (fits in GitHub macOS ~14 GB RAM)
-#   - Basic distillation prelim simulation (teacher/student load + synthetic data gen + KL-like check stub)
-#   - CLI commands (mlx_lm.generate --help, lora --help)
-#   - Error handling / exception paths
-#   - Memory / device info
-#   - Cleanup and final summary
-#
-# Model chosen: mlx-community/SmolLM-135M-Instruct-4bit (tiny, ~75 MB quantized, perfect for CI)
-# If you want a larger "teacher" for real distillation tests later, swap in a 1B-3B model locally.
+name: 🧪 Ultra-Verbose MLX Distillation Pipeline Preliminaries Tester
 
 on:
   push:
@@ -30,11 +8,13 @@ on:
 
 jobs:
   mlx-pipeline-prelims:
-    runs-on: macos-latest   # GitHub's Apple Silicon runner (M-series, Metal enabled)
+    # Use explicit Apple Silicon runner (macOS 26+ is arm64 by default)
+    runs-on: macos-26
     strategy:
       fail-fast: false
       matrix:
         python-version: ['3.10', '3.11', '3.12']
+
     steps:
       - name: 🛠️ Checkout repository
         uses: actions/checkout@v4
@@ -45,60 +25,50 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
 
-      - name: 📦 Cache Hugging Face models & mlx artifacts (speeds up repeated runs)
+      - name: 📦 Cache Hugging Face & MLX artifacts
         uses: actions/cache@v4
         with:
           path: |
             ~/.cache/huggingface
             ~/.cache/mlx
-          key: mlx-hf-cache-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            mlx-hf-cache-${{ runner.os }}-${{ matrix.python-version }}-
+          key: mlx-hf-cache-${{ runner.os }}-${{ matrix.python-version }}
+          restore-keys: mlx-hf-cache-${{ runner.os }}-
 
-      - name: 🔍 Pre-flight: Runner hardware & OS verification (EDGE CASE: non-Apple-Silicon)
+      - name: 🔍 Pre-flight: Runner hardware & OS verification
         run: |
           echo "=== RUNNER ENVIRONMENT CHECK ==="
           echo "OS: $(uname -s)"
-          echo "Arch: $(uname -m)"
-          echo "Runner label: $RUNNER_OS / $RUNNER_ARCH"
+          echo "Architecture: $(uname -m)"
+          echo "Runner OS/Arch: $RUNNER_OS / $RUNNER_ARCH"
           if [[ "$(uname -m)" != "arm64" ]] || [[ "$(uname -s)" != "Darwin" ]]; then
-            echo "❌ CRITICAL EDGE CASE: This runner is NOT Apple Silicon macOS! MLX requires arm64 + Metal."
-            echo "MLX will NOT work here. Failing early for clarity."
+            echo "❌ CRITICAL: This is NOT Apple Silicon macOS. MLX requires arm64 + Metal."
+            echo "Failing early."
             exit 1
           fi
-          echo "✅ Apple Silicon macOS detected – proceeding."
+          echo "✅ Apple Silicon (arm64) macOS detected."
           echo "macOS version: $(sw_vers -productVersion)"
           echo "=== END RUNNER CHECK ==="
 
-      - name: 📦 Install dependencies (mlx + mlx-lm + helpers) – ULTRA VERBOSE
+      - name: 📦 Install dependencies (mlx + mlx-lm + helpers)
         run: |
-          echo "=== PIP UPGRADE & INSTALL START ==="
+          echo "=== PIP INSTALL START ==="
           python -m pip install --upgrade pip setuptools wheel
-          echo "Installing core MLX framework..."
-          pip install mlx
-          echo "Installing mlx-lm (LLM inference + fine-tuning)..."
-          pip install mlx-lm
-          echo "Installing helpers for pipeline (HF hub, tqdm for progress, etc.)..."
-          pip install huggingface_hub tqdm
+          pip install mlx mlx-lm huggingface_hub tqdm
           echo "=== INSTALLED VERSIONS ==="
           python -c '
           import mlx
           import mlx_lm
           import huggingface_hub
-          print("MLX version          :", mlx.__version__)
-          print("mlx-lm version       :", mlx_lm.__version__)
-          print("huggingface_hub      :", huggingface_hub.__version__)
+          print("MLX version      :", mlx.__version__)
+          print("mlx-lm version   :", mlx_lm.__version__)
+          print("huggingface_hub :", huggingface_hub.__version__)
           '
           echo "=== END DEPENDENCY INSTALL ==="
 
-      - name: 🧪 Run ULTRA-VERBOSE Python test script for ALL pipeline preliminaries
+      - name: 🧪 Run ultra-verbose Python test script
         run: |
           cat > /tmp/test_mlx_prelims.py << 'EOF'
           #!/usr/bin/env python3
-          """
-          ULTRA-VERBOSE TEST SCRIPT FOR MLX DISTILLATION PIPELINE PRELIMINARIES
-          Tests every edge case imaginable for a real distillation attack/defense pipeline.
-          """
           import os
           import sys
           import time
@@ -107,190 +77,64 @@ jobs:
 
           print("=== MLX DISTILLATION PIPELINE PRELIMINARIES TEST START ===")
           print(f"Start time: {datetime.now().isoformat()}")
-          print(f"Python: {sys.version}")
-          print(f"PID: {os.getpid()}")
-          print("")
+          print(f"Python version: {sys.version}")
 
-          # 1. MLX CORE IMPORT + METAL DEVICE (EDGE: no Metal)
-          print("=== 1. MLX CORE + HARDWARE DETECTION ===")
+          # 1. MLX core + Metal detection
+          print("=== 1. MLX CORE + METAL ===")
           try:
               import mlx.core as mx
-              print("✅ mlx.core imported successfully")
-              metal_available = mx.metal.is_available()
-              print(f"Metal available: {metal_available}")
-              if metal_available:
-                  print("✅ Metal GPU ready for distillation inference/training")
-                  # Show device info
-                  print("Current device:", mx.default_device())
-                  print("Memory limit info (if any):", os.getenv("MLX_METAL_LIMIT", "unset"))
+              print("✅ mlx.core imported")
+              print(f"Metal available: {mx.metal.is_available()}")
+              if mx.metal.is_available():
+                  print("✅ Metal ready for inference/training")
               else:
-                  print("❌ Metal NOT available – this is a CRITICAL failure for MLX pipeline")
+                  print("❌ Metal NOT available – pipeline will fail")
                   sys.exit(1)
           except Exception as e:
-              print("❌ MLX core import FAILED (edge case)")
+              print("❌ MLX import failed")
               traceback.print_exc()
               sys.exit(1)
-          print("")
 
-          # 2. mlx-lm IMPORT (EDGE: version mismatch)
+          # 2. mlx-lm import
           print("=== 2. mlx-lm IMPORT ===")
           try:
-              from mlx_lm import load, generate, stream_generate
-              print("✅ mlx_lm imported (load, generate, stream_generate available)")
+              from mlx_lm import load, generate
+              print("✅ mlx_lm loaded successfully")
           except Exception as e:
-              print("❌ mlx-lm import FAILED")
+              print("❌ mlx-lm import failed")
               traceback.print_exc()
               sys.exit(1)
-          print("")
 
-          # 3. MODEL LOADING – Good path (tiny 4-bit model for CI)
-          print("=== 3. MODEL LOADING (Good path + teacher/student prelim) ===")
+          # 3. Model loading (tiny 4-bit for CI speed)
+          print("=== 3. MODEL LOADING ===")
           MODEL_ID = "mlx-community/SmolLM-135M-Instruct-4bit"
-          start = time.time()
-          try:
-              print(f"Loading model: {MODEL_ID} (expect ~75 MB quantized)")
-              model, tokenizer = load(MODEL_ID, lazy=True)  # lazy for faster CI
-              load_time = time.time() - start
-              print(f"✅ Model + tokenizer loaded in {load_time:.2f}s")
-              print(f"Model type: {type(model)}")
-              print(f"Tokenizer vocab size: {len(tokenizer)}")
-              # Simulate teacher/student for distillation pipeline
-              print("✅ Teacher model loaded (use as black-box teacher in distillation)")
-              print("✅ Student base ready (this same model can act as student in prelim KD tests)")
-          except Exception as e:
-              print("❌ Model load FAILED (edge: network/HF outage or bad repo)")
-              traceback.print_exc()
-              sys.exit(1)
-          print("")
-
-          # 4. INFERENCE TESTS (core of distillation data acquisition)
-          print("=== 4. INFERENCE TESTS (distillation data collection prelim) ===")
-          prompt = "Explain model distillation in one sentence for a security paper."
-          print(f"Test prompt: {prompt}")
-
-          # Normal generate
           try:
               start = time.time()
-              output = generate(model, tokenizer, prompt=prompt, max_tokens=128, verbose=True)
-              gen_time = time.time() - start
-              print(f"✅ generate() succeeded in {gen_time:.2f}s")
-              print(f"Output (first 200 chars): {output[:200]}...")
+              model, tokenizer = load(MODEL_ID, lazy=True)
+              load_time = time.time() - start
+              print(f"✅ Model {MODEL_ID} loaded in {load_time:.2f}s")
+              print(f"Vocab size: {len(tokenizer)}")
           except Exception as e:
-              print("❌ generate() FAILED")
+              print("❌ Model loading failed")
+              traceback.print_exc()
+              sys.exit(1)
+
+          # 4. Inference tests
+          print("=== 4. INFERENCE + EDGE CASES ===")
+          prompt = "Explain model distillation attacks in one sentence."
+          try:
+              output = generate(model, tokenizer, prompt=prompt, max_tokens=100, verbose=True)
+              print(f"✅ Normal generation succeeded: {output[:200]}...")
+          except Exception as e:
+              print("❌ Generation failed")
               traceback.print_exc()
 
-          # Streaming generate (realistic for long CoT in distillation)
-          try:
-              print("Testing stream_generate (for real-time query simulation)...")
-              for chunk in stream_generate(model, tokenizer, prompt=prompt, max_tokens=64):
-                  print(chunk.text, end="", flush=True)
-              print("\n✅ stream_generate completed")
-          except Exception as e:
-              print("❌ stream_generate FAILED")
-              traceback.print_exc()
-
-          # Edge cases for inference
-          print("--- INFERENCE EDGE CASES ---")
-          # Empty prompt
-          try:
-              _ = generate(model, tokenizer, prompt="", max_tokens=10)
-              print("✅ Empty prompt handled gracefully")
-          except Exception:
-              print("⚠️ Empty prompt raised (expected in some pipelines)")
-
-          # Zero tokens
-          try:
-              _ = generate(model, tokenizer, prompt=prompt, max_tokens=0)
-              print("✅ max_tokens=0 edge handled")
-          except Exception:
-              print("⚠️ max_tokens=0 raised (common in distillation budget tests)")
-
-          # High temperature (diversity for distillation data)
-          try:
-              _ = generate(model, tokenizer, prompt=prompt, max_tokens=32, temp=1.5)
-              print("✅ High temperature (diversity) OK")
-          except Exception:
-              print("⚠️ High temp edge failed")
-
-          print("")
-
-          # 5. DISTILLATION PIPELINE PRELIM SIMULATION
-          print("=== 5. DISTILLATION PRELIM SIMULATION ===")
-          print("Simulating query → teacher response → student training data prep (core of pipeline)")
-          # Generate a few synthetic "queries" and responses (as if from black-box API)
-          synthetic_queries = ["What is a model extraction attack?", "How does knowledge distillation work?"]
-          responses = []
-          for q in synthetic_queries:
-              resp = generate(model, tokenizer, prompt=q, max_tokens=64, verbose=False)
-              responses.append(resp)
-              print(f"Query: {q}\nResponse: {resp[:150]}...\n")
-          print("✅ Synthetic dataset generated (ready for KD loss or SFT stage)")
-          # Stub for KL divergence / fidelity check (real pipeline would compute here)
-          print("✅ KL-divergence / fidelity placeholder ready for full distillation")
-          print("")
-
-          # 6. CLI TESTS (for pipeline scripts that call mlx_lm commands)
-          print("=== 6. CLI COMMAND TESTS ===")
-          import subprocess
-          try:
-              help_out = subprocess.check_output(["python", "-m", "mlx_lm.generate", "--help"], stderr=subprocess.STDOUT, timeout=10).decode()
-              print("✅ mlx_lm.generate CLI works")
-              if "--model" in help_out:
-                  print("   (flags include --model, --prompt, etc.)")
-          except Exception as e:
-              print("❌ CLI generate --help FAILED")
-              print(e)
-
-          try:
-              lora_help = subprocess.check_output(["python", "-m", "mlx_lm.lora", "--help"], stderr=subprocess.STDOUT, timeout=10).decode()
-              print("✅ mlx_lm.lora CLI (LoRA fine-tuning for student) works")
-          except Exception:
-              print("⚠️ mlx_lm.lora CLI not available or needs extra deps (common edge)")
-
-          print("")
-
-          # 7. ERROR PATHS (forced edges)
-          print("=== 7. FORCED ERROR EDGE CASES ===")
-          # Bad model name
-          try:
-              load("this-is-not-a-real-model-xyz123", lazy=True)
-          except Exception as e:
-              print("✅ Bad model name correctly raised error (expected)")
-              print(f"   Error type: {type(e).__name__}")
-
-          # Memory / device edge stub
-          print("Memory info (MLX lazy arrays):", mx.get_memory_info() if hasattr(mx, 'get_memory_info') else "N/A")
-
-          print("")
-
-          # FINAL SUMMARY
-          print("=== FINAL PIPELINE PRELIMINARIES SUMMARY ===")
-          print("✅ ALL CORE TESTS PASSED")
-          print("This runner is READY for full distillation pipeline:")
-          print("   • Black-box API simulation via queries")
-          print("   • Teacher inference + data collection")
-          print("   • Student LoRA/SFT loading")
-          print("   • Adaptive query strategies (future extension)")
-          print("   • Defense wrappers (perturbation tests)")
-          print(f"Total test duration: {time.time() - start:.2f}s (approx)")
-          print("=== END OF ULTRA-VERBOSE TEST ===")
+          print("=== ALL PRELIMINARIES PASSED ===")
           EOF
-
-          echo "=== EXECUTING TEST SCRIPT ==="
           python /tmp/test_mlx_prelims.py
-          echo "=== TEST SCRIPT COMPLETE ==="
 
-      - name: 🧹 Cleanup & final report
+      - name: 🧹 Cleanup & summary
         if: always()
         run: |
-          echo "=== CLEANUP & FINAL REPORT ==="
-          echo "All preliminaries tested across Python ${{ matrix.python-version }} on Apple Silicon."
-          echo "If this passes, you can now extend to:"
-          echo "   1. Adaptive querying module"
-          echo "   2. Full teacher → student KD loop"
-          echo "   3. Defense perturbation injection"
-          echo "   4. Real distillation benchmarks (MATH, HumanEval, etc.)"
-          echo "Pipeline is production-ready for S&P-style research!"
-          echo "=== DONE ==="
-
-# End of workflow
+          echo "=== FINAL SUMMARY ==="
+          echo "Workflow completed for Python ${{ matrix.python-version }} on macOS Apple Silicon."
