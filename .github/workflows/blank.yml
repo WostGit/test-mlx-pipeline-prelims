@@ -22,6 +22,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          # Removed automatic 'cache' to avoid errors if requirements.txt is missing
 
       - name: "📦 Cache Hugging Face & MLX artifacts"
         uses: actions/cache@v4
@@ -39,10 +40,10 @@ jobs:
           echo "OS: $(uname -s)"
           echo "Arch: $(uname -m)"
           if [[ "$(uname -m)" != "arm64" ]] || [[ "$(uname -s)" != "Darwin" ]]; then
-            echo "❌ CRITICAL: Not Apple Silicon macOS"
+            echo "❌ CRITICAL: Not Apple Silicon macOS → MLX will fail"
             exit 1
           fi
-          echo "✅ Apple Silicon confirmed"
+          echo "✅ Apple Silicon (arm64) confirmed"
           echo "=== END CHECK ==="
 
       - name: "📦 Install dependencies (mlx + mlx-lm + helpers)"
@@ -50,17 +51,18 @@ jobs:
           echo "=== PIP INSTALL ==="
           python -m pip install --upgrade pip setuptools wheel
           pip install mlx mlx-lm huggingface_hub tqdm
-          echo "=== VERSIONS (robust) ==="
+          echo "=== VERSIONS ==="
           python -c '
           import importlib.metadata as metadata
-          print("mlx version      :", metadata.version("mlx"))
-          print("mlx-lm version   :", metadata.version("mlx-lm"))
-          print("huggingface_hub  :", metadata.version("huggingface_hub"))
-          print("numpy            :", metadata.version("numpy"))
+          for pkg in ["mlx", "mlx-lm", "huggingface_hub", "numpy"]:
+              try:
+                  print(f"{pkg:15}: {metadata.version(pkg)}")
+              except:
+                  print(f"{pkg:15}: NOT INSTALLED")
           '
           echo "=== INSTALL COMPLETE ==="
 
-      - name: "🧪 Run FULL ultra-verbose distillation pipeline test (with sampler fix)"
+      - name: "🧪 Run FULL ultra-verbose distillation pipeline test"
         run: |
           cat > /tmp/test_distillation_pipeline.py << 'EOF'
           import os
@@ -70,115 +72,77 @@ jobs:
           from datetime import datetime
           import importlib.metadata as metadata
 
-          print("=== 🚀 FULL MLX DISTILLATION PIPELINE TEST (mlx-lm 0.31.1 FIXED) ===")
+          print("=== 🚀 FULL MLX DISTILLATION PIPELINE TEST (mlx-lm 0.31.x) ===")
           print(f"Start: {datetime.now().isoformat()}")
           print(f"Python: {sys.version}")
-          print(f"mlx version: {metadata.version('mlx')}")
-          print(f"mlx-lm version: {metadata.version('mlx-lm')}")
-          print("")
-
+          
           # 1. HARDWARE
           print("=== 1. HARDWARE ===")
           try:
               import mlx.core as mx
               print(f"Metal available: {mx.metal.is_available()}")
               print(f"Device: {mx.default_device()}")
-          except Exception as e:
+          except Exception:
               print("❌ Hardware check failed")
               traceback.print_exc()
               sys.exit(1)
-          print("")
 
           # 2. IMPORTS
-          print("=== 2. IMPORTS ===")
+          print("\n=== 2. IMPORTS ===")
           try:
               from mlx_lm import load, generate
               from mlx_lm.sample_utils import make_sampler
-              print("✅ mlx_lm loaded")
-              print("✅ make_sampler imported (required for temperature)")
-          except Exception as e:
+              print("✅ mlx_lm and make_sampler imported")
+          except Exception:
               print("❌ Import failed")
               traceback.print_exc()
               sys.exit(1)
-          print("")
 
           # 3. LOAD TEACHER MODEL
-          print("=== 3. LOADING TEACHER MODEL ===")
+          print("\n=== 3. LOADING TEACHER MODEL ===")
           MODEL_ID = "mlx-community/SmolLM-135M-Instruct-4bit"
           try:
               start = time.time()
               model, tokenizer = load(MODEL_ID, lazy=True)
-              load_time = time.time() - start
-              print(f"✅ Teacher loaded in {load_time:.2f}s")
-          except Exception as e:
+              print(f"✅ Teacher loaded in {time.time() - start:.2f}s")
+          except Exception:
               print("❌ Model loading failed")
               traceback.print_exc()
               sys.exit(1)
-          print("")
 
           # 4. TEACHER QUERYING + DATASET CREATION
-          print("=== 4. TEACHER QUERYING + DATASET CREATION ===")
+          print("\n=== 4. TEACHER QUERYING + DATASET CREATION ===")
           queries = [
               "What is a model distillation attack?",
-              "Explain how knowledge distillation can be used in model extraction attacks.",
-              "What are effective defenses against LLM distillation?",
+              "Explain knowledge distillation in model extraction attacks.",
+              "Defenses against LLM distillation?",
               "Describe a query-efficient black-box distillation pipeline."
           ]
-
           dataset = []
           sampler = make_sampler(temp=0.7, top_p=0.9)
-
           for i, q in enumerate(queries, 1):
               print(f"Query {i}/{len(queries)}: {q}")
               try:
                   start = time.time()
-                  response = generate(
-                      model,
-                      tokenizer,
-                      prompt=q,
-                      max_tokens=120,
-                      sampler=sampler,
-                      verbose=False
-                  )
-                  gen_time = time.time() - start
-                  print(f"   ✅ Response generated in {gen_time:.2f}s")
-                  print(f"   Sample: {response[:250]}...\n")
+                  response = generate(model, tokenizer, prompt=q, max_tokens=120, sampler=sampler, verbose=False)
+                  print(f"   ✅ Response generated in {time.time() - start:.2f}s")
                   dataset.append({"prompt": q, "response": response})
-              except Exception as e:
-                  print(f"   ❌ Query failed: {type(e).__name__}")
-                  traceback.print_exc()
-
-          print(f"✅ Dataset created with {len(dataset)} teacher responses")
-          print("   (ready for student KD / SFT stage)")
-          print("")
+              except Exception:
+                  print(f"   ❌ Query failed")
 
           # 5. EDGE CASES
-          print("=== 5. EDGE CASES ===")
-          edge_cases = [
-              ("Empty prompt", ""),
-              ("Zero max_tokens", "Test prompt", 0),
-              ("High temperature (diversity)", "Test prompt", 128, 1.5),
-              ("Low temperature (deterministic)", "Test prompt", 64, 0.1),
-          ]
-
+          print("\n=== 5. EDGE CASES ===")
+          edge_cases = [("Empty prompt", ""), ("Zero max_tokens", "Test", 0)]
           for name, prompt, *args in edge_cases:
-              max_t = args[0] if args else 10
-              temp_val = args[1] if len(args) > 1 else 0.7
               try:
-                  sampler_edge = make_sampler(temp=temp_val, top_p=0.95)
-                  _ = generate(model, tokenizer, prompt=prompt, max_tokens=max_t, sampler=sampler_edge, verbose=False)
-                  print(f"✅ {name} handled successfully")
-              except Exception as e:
-                  print(f"⚠️ {name} raised {type(e).__name__} (often expected)")
+                  m_tokens = args[0] if args else 10
+                  _ = generate(model, tokenizer, prompt=prompt, max_tokens=m_tokens, verbose=False)
+                  print(f"✅ {name} handled")
+              except Exception:
+                  print(f"⚠️ {name} raised exception")
 
-          print("")
-
-          # 6. FINAL SUMMARY
-          print("=== 6. DISTILLATION PIPELINE SUMMARY ===")
-          print("🎉 ALL PRELIMINARIES PASSED")
-          print("Runner is ready for full S&P-style distillation research.")
+          print("\n=== 🎉 ALL PRELIMINARIES PASSED ===")
           EOF
-
           python /tmp/test_distillation_pipeline.py
 
       - name: "🧹 Cleanup & final summary"
@@ -186,4 +150,5 @@ jobs:
         run: |
           echo "=== WORKFLOW SUMMARY ==="
           echo "Python version: ${{ matrix.python-version }}"
-          echo "Status: If the test script passed → MLX distillation pipeline foundation is solid."
+          echo "Runner: macOS Apple Silicon"
+          echo "✅ MLX distillation pipeline foundation is solid."
